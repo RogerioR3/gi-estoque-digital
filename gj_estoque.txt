@@ -1,0 +1,712 @@
+-- DROP TABLE IF EXISTS produtos;
+CREATE TABLE produtos (
+  id_produto int NOT NULL AUTO_INCREMENT,
+  quantidade int NOT NULL DEFAULT 0,
+  nome varchar(100) NOT NULL,
+  marca varchar(50) NOT NULL,
+  valor_venda double(7,2) NOT NULL,
+  descricao varchar(500) NOT NULL,
+  PRIMARY KEY (id_produto)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+LOCK TABLES produtos WRITE;
+UNLOCK TABLES;
+
+
+-- DROP TABLE IF EXISTS estoque;
+CREATE TABLE estoque (
+  id_estoque int NOT NULL AUTO_INCREMENT,
+  id_produto int NOT NULL,
+  quantidade_compra int NOT NULL,
+  validade date NOT NULL, -- Acressentado
+  data_compra date NOT NULL DEFAULT (CURDATE()), -- Acressentado
+  valor_compra double(7,2) NOT NULL,
+  PRIMARY KEY (id_estoque)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+
+-- DROP TABLE IF EXISTS vendas;
+CREATE TABLE vendas (
+  id_venda int NOT NULL AUTO_INCREMENT,
+  id_estoque int NOT NULL,
+  quantidade_venda int NOT NULL DEFAULT (CURDATE()),
+  data_venda date NOT NULL, -- Acressentado
+  PRIMARY KEY (id_venda)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+
+
+
+-- TRIGGER's --------------------------------------------------------------
+
+DELIMITER $$
+
+CREATE TRIGGER inserir_no_estoque
+BEFORE INSERT ON estoque
+FOR EACH ROW
+BEGIN
+    -- Validar se produto existe
+    IF NOT EXISTS (SELECT 1 FROM produtos WHERE id_produto = NEW.id_produto) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Produto não existe';
+    END IF;
+    
+    -- Validar quantidade positiva
+    IF NEW.quantidade_compra <= 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Quantidade deve ser positiva';
+    END IF;
+    
+    -- Atualizar estoque
+    UPDATE produtos 
+    SET quantidade = quantidade + NEW.quantidade_compra
+    WHERE id_produto = NEW.id_produto;
+END$$
+
+CREATE TRIGGER after_estoque_update 
+AFTER UPDATE ON estoque
+FOR EACH ROW
+BEGIN
+    -- Se mudou o produto, ajustar ambos
+    IF OLD.id_produto != NEW.id_produto THEN
+        -- Remove do produto antigo
+        UPDATE produtos 
+        SET quantidade = quantidade - OLD.quantidade_compra
+        WHERE id_produto = OLD.id_produto;
+        
+        -- Adiciona ao novo produto
+        UPDATE produtos 
+        SET quantidade = quantidade + NEW.quantidade_compra
+        WHERE id_produto = NEW.id_produto;
+    ELSE
+        -- Mesmo produto, ajusta diferença
+        UPDATE produtos 
+        SET quantidade = quantidade - OLD.quantidade_compra + NEW.quantidade_compra
+        WHERE id_produto = NEW.id_produto;
+    END IF;
+END$$
+
+CREATE TRIGGER after_estoque_delete 
+AFTER DELETE ON estoque
+FOR EACH ROW
+BEGIN
+    -- Verificar se não deixará estoque negativo
+    DECLARE estoque_atual INT;
+    
+    SELECT quantidade INTO estoque_atual 
+    FROM produtos 
+    WHERE id_produto = OLD.id_produto;
+    
+    IF (estoque_atual - OLD.quantidade_compra) < 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Remoção causaria estoque negativo';
+    END IF;
+    
+    UPDATE produtos 
+    SET quantidade = quantidade - OLD.quantidade_compra
+    WHERE id_produto = OLD.id_produto;
+END$$
+
+DELIMITER ;
+
+-- Trigger para vendas
+DELIMITER //
+
+CREATE TRIGGER tg_atualiza_estoque_venda
+    AFTER INSERT ON vendas
+    FOR EACH ROW
+BEGIN
+    DECLARE v_quantidade_estoque INT;
+    DECLARE v_id_produto INT;
+    DECLARE v_mensagem_erro VARCHAR(500);
+    
+    -- Obtém o id_produto e a quantidade atual do estoque
+    SELECT e.id_produto, e.quantidade_compra 
+    INTO v_id_produto, v_quantidade_estoque
+    FROM estoque e
+    WHERE e.id_estoque = NEW.id_estoque;
+    
+    -- Verifica se há estoque suficiente
+    IF v_quantidade_estoque >= NEW.quantidade_venda THEN
+        -- Atualiza o estoque subtraindo a quantidade vendida
+        UPDATE estoque 
+        SET quantidade_compra = quantidade_compra - NEW.quantidade_venda
+        WHERE id_estoque = NEW.id_estoque;
+        
+        -- Atualiza também a quantidade na tabela produtos
+        UPDATE produtos 
+        SET quantidade = quantidade - NEW.quantidade_venda
+        WHERE id_produto = v_id_produto;
+        
+    ELSE
+        -- Se não houver estoque suficiente, levanta um erro
+        SET v_mensagem_erro = CONCAT('Estoque insuficiente. Estoque atual: ', 
+                                 v_quantidade_estoque, 
+                                 ', Quantidade solicitada: ', NEW.quantidade_venda);
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = v_mensagem_erro;
+    END IF;
+    
+END//
+
+DELIMITER ;
+
+DELIMITER $$
+
+CREATE TRIGGER before_venda_insert
+BEFORE INSERT ON vendas
+FOR EACH ROW
+BEGIN
+    DECLARE estoque_disponivel INT;
+    
+    -- Verificar estoque disponível
+    SELECT e.quantidade_compra - COALESCE(SUM(v.quantidade_venda), 0)
+    INTO estoque_disponivel
+    FROM estoque e
+    LEFT JOIN vendas v ON v.id_estoque = e.id_estoque
+    WHERE e.id_estoque = NEW.id_estoque
+    GROUP BY e.id_estoque;
+    
+    IF estoque_disponivel < NEW.quantidade_venda THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Estoque insuficiente';
+    END IF;
+END$$
+
+DELIMITER ;
+
+DELIMITER $$
+
+-- Trigger BEFORE INSERT para produtos (garantir quantidade = 0 se NULL)
+CREATE TRIGGER before_produtos_insert
+BEFORE INSERT ON produtos
+FOR EACH ROW
+BEGIN
+    -- Se quantidade for NULL, definir como 0
+    IF NEW.quantidade IS NULL THEN
+        SET NEW.quantidade = 0;
+    END IF;
+END$$
+
+-- Trigger BEFORE INSERT para estoque (garantir data_compra = hoje se NULL)
+CREATE TRIGGER before_estoque_insert
+BEFORE INSERT ON estoque
+FOR EACH ROW
+BEGIN
+    -- Se data_compra for NULL, definir como data atual
+    IF NEW.data_compra IS NULL THEN
+        SET NEW.data_compra = CURDATE();
+    END IF;
+    
+    -- Se validade for NULL, definir como 30 dias a partir de hoje
+    IF NEW.validade IS NULL THEN
+        SET NEW.validade = DATE_ADD(CURDATE(), INTERVAL 30 DAY);
+    END IF;
+END$$
+
+-- Trigger BEFORE INSERT para vendas (garantir data_venda = hoje se NULL)
+CREATE TRIGGER before_vendas_insert
+BEFORE INSERT ON vendas
+FOR EACH ROW
+BEGIN
+    -- Se data_venda for NULL, definir como data atual
+    IF NEW.data_venda IS NULL THEN
+        SET NEW.data_venda = CURDATE();
+    END IF;
+END$$
+
+-- Trigger BEFORE UPDATE para garantir consistência
+CREATE TRIGGER before_produtos_update
+BEFORE UPDATE ON produtos
+FOR EACH ROW
+BEGIN
+    -- Impedir que quantidade seja definida como NULL
+    IF NEW.quantidade IS NULL THEN
+        SET NEW.quantidade = 0;
+    END IF;
+END$$
+
+DELIMITER ;
+
+CREATE INDEX idx_estoque_produto ON estoque(id_produto);
+CREATE INDEX idx_estoque_validade ON estoque(validade);
+CREATE INDEX idx_vendas_estoque ON vendas(id_estoque);
+CREATE INDEX idx_vendas_data ON vendas(data_venda);
+
+-- FUNCTIONS E PROCEDURES ADICIONAIS ----------------------------------------
+
+DELIMITER $$
+
+-- Function para calcular lucro
+CREATE FUNCTION CalcularLucro(
+    valor_compra DOUBLE(7,2), 
+    valor_venda DOUBLE(7,2), 
+    quantidade INT
+) 
+RETURNS DOUBLE(7,2)
+DETERMINISTIC
+BEGIN
+    DECLARE lucro DOUBLE(7,2);
+    SET lucro = (valor_venda - valor_compra) * quantidade;
+    RETURN IFNULL(lucro, 0);
+END$$
+
+-- Function para verificar validade vencida
+CREATE FUNCTION VerificarValidadeVencida(validade DATE) 
+RETURNS BOOLEAN
+DETERMINISTIC
+BEGIN
+    RETURN validade < CURDATE();
+END$$
+
+-- Function para verificar validade próxima (até 7 dias)
+CREATE FUNCTION VerificarValidadeProxima(validade DATE) 
+RETURNS BOOLEAN
+DETERMINISTIC
+BEGIN
+    RETURN validade BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY);
+END$$
+
+DELIMITER ;
+
+-- VIEWS SOLICITADAS --------------------------------------------------------
+
+-- View 1: Produtos completos
+CREATE VIEW view_produtos_completos AS
+SELECT 
+    p.id_produto AS ID_Produto,
+    p.nome AS Nome,
+    p.quantidade AS Quantidade_Produto,
+    p.marca AS Marca,
+    p.valor_venda AS Valor_Venda,
+    p.descricao AS Descricao
+FROM produtos p;
+
+-- View 2: Estoque detalhado
+CREATE VIEW view_estoque_detalhado AS
+SELECT 
+    e.id_estoque AS ID_Estoque,
+    p.nome AS Nome,
+    e.quantidade_compra AS Quantidade_Estoque,
+    p.marca AS Marca,
+    e.data_compra AS Data_Compra,
+    e.valor_compra AS Valor_Compra,
+    e.validade AS Data_de_Validade
+FROM estoque e
+INNER JOIN produtos p ON e.id_produto = p.id_produto;
+
+-- View 3: Vendas com lucro
+CREATE VIEW view_vendas_lucro AS
+SELECT 
+    v.id_venda AS ID_Venda,
+    p.nome AS Nome,
+    v.quantidade_venda AS Quantidade_Venda,
+    p.marca AS Marca,
+    e.data_compra AS Data_Compra,
+    e.valor_compra AS Valor_Compra,
+    p.valor_venda AS Valor_Venda,
+    v.data_venda AS Data_Venda,
+    CalcularLucro(e.valor_compra, p.valor_venda, v.quantidade_venda) AS Lucro
+FROM vendas v
+INNER JOIN estoque e ON v.id_estoque = e.id_estoque
+INNER JOIN produtos p ON e.id_produto = p.id_produto;
+
+-- View 4: Produtos com validade vencida
+CREATE VIEW view_estoque_vencido AS
+SELECT 
+    e.id_estoque AS ID_Estoque,
+    p.nome AS Nome,
+    e.quantidade_compra AS Quantidade_Estoque,
+    p.marca AS Marca,
+    e.valor_compra AS Valor_Compra,
+    p.valor_venda AS Valor_Venda,
+    e.validade AS Data_de_Validade
+FROM estoque e
+INNER JOIN produtos p ON e.id_produto = p.id_produto
+WHERE VerificarValidadeVencida(e.validade) = TRUE;
+
+-- View 5: Produtos com validade próxima (até 7 dias)
+CREATE VIEW view_estoque_validade_proxima AS
+SELECT 
+    e.id_estoque AS ID_Estoque,
+    p.nome AS Nome,
+    e.quantidade_compra AS Quantidade_Estoque,
+    p.marca AS Marca,
+    e.valor_compra AS Valor_Compra,
+    p.valor_venda AS Valor_Venda,
+    e.validade AS Data_de_Validade,
+    DATEDIFF(e.validade, CURDATE()) AS Dias_Para_Vencer
+FROM estoque e
+INNER JOIN produtos p ON e.id_produto = p.id_produto
+WHERE VerificarValidadeProxima(e.validade) = TRUE;
+
+-- PROCEDURES PARA TESTES ADICIONAIS ----------------------------------------
+
+DELIMITER $$
+
+-- Procedure para testar inserção com produto inexistente
+CREATE PROCEDURE TestarInsercaoProdutoInexistente()
+BEGIN
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        SELECT 'Erro capturado: Produto não existe' AS Resultado;
+    END;
+    
+    -- Tentativa de inserir estoque para produto que não existe
+    INSERT INTO estoque (id_produto, quantidade_compra, validade, data_compra, valor_compra) 
+    VALUES (999, 10, '2024-12-31', '2024-02-01', 5.00);
+    
+    SELECT 'Inserção realizada (ISSO NÃO DEVERIA ACONTECER)' AS Resultado;
+END$$
+
+-- Procedure para testar quantidade negativa
+CREATE PROCEDURE TestarQuantidadeNegativa()
+BEGIN
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        SELECT 'Erro capturado: Quantidade deve ser positiva' AS Resultado;
+    END;
+    
+    -- Tentativa de inserir quantidade negativa
+    INSERT INTO estoque (id_produto, quantidade_compra, validade, data_compra, valor_compra) 
+    VALUES (1, -5, '2024-12-31', '2024-02-01', 5.00);
+    
+    SELECT 'Inserção realizada (ISSO NÃO DEVERIA ACONTECER)' AS Resultado;
+END$$
+
+-- Procedure para testar venda com estoque insuficiente
+CREATE PROCEDURE TestarVendaEstoqueInsuficiente()
+BEGIN
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        SELECT 'Erro capturado: Estoque insuficiente' AS Resultado;
+    END;
+    
+    -- Tentativa de vender mais do que tem no estoque
+    INSERT INTO vendas (id_estoque, quantidade_venda, data_venda) 
+    VALUES (1, 1000, '2024-02-05');
+    
+    SELECT 'Venda realizada (ISSO NÃO DEVERIA ACONTECER)' AS Resultado;
+END$$
+
+DELIMITER ;
+
+-- FUNCTIONS DE CONSULTA SOLICITADAS ----------------------------------------
+
+DELIMITER $$
+
+-- Function 1: Buscar marcas que correspondem a um nome de produto
+CREATE FUNCTION BuscarMarcasPorNome(nome_produto VARCHAR(100)) 
+RETURNS TEXT
+READS SQL DATA
+DETERMINISTIC
+BEGIN
+    DECLARE marcas_encontradas TEXT DEFAULT '';
+    DECLARE done INT DEFAULT FALSE;
+    DECLARE marca_var VARCHAR(50);
+    
+    -- Cursor para buscar marcas distintas
+    DECLARE cur_marcas CURSOR FOR
+        SELECT DISTINCT marca 
+        FROM produtos 
+        WHERE nome LIKE CONCAT('%', nome_produto, '%');
+    
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
+    
+    OPEN cur_marcas;
+    
+    read_loop: LOOP
+        FETCH cur_marcas INTO marca_var;
+        IF done THEN
+            LEAVE read_loop;
+        END IF;
+        
+        IF marcas_encontradas = '' THEN
+            SET marcas_encontradas = marca_var;
+        ELSE
+            SET marcas_encontradas = CONCAT(marcas_encontradas, ', ', marca_var);
+        END IF;
+    END LOOP;
+    
+    CLOSE cur_marcas;
+    
+    RETURN IFNULL(marcas_encontradas, 'Nenhuma marca encontrada para este nome');
+END$$
+
+-- Function 2: Buscar todos os nomes de produtos disponíveis
+CREATE FUNCTION BuscarNomesDeProdutos() 
+RETURNS TEXT
+READS SQL DATA
+DETERMINISTIC
+BEGIN
+    DECLARE nomes_encontrados TEXT DEFAULT '';
+    DECLARE done INT DEFAULT FALSE;
+    DECLARE nome_var VARCHAR(100);
+    
+    -- Cursor para buscar nomes distintos
+    DECLARE cur_nomes CURSOR FOR
+        SELECT DISTINCT nome 
+        FROM produtos 
+        ORDER BY nome;
+    
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
+    
+    OPEN cur_nomes;
+    
+    read_loop: LOOP
+        FETCH cur_nomes INTO nome_var;
+        IF done THEN
+            LEAVE read_loop;
+        END IF;
+        
+        IF nomes_encontrados = '' THEN
+            SET nomes_encontrados = nome_var;
+        ELSE
+            SET nomes_encontrados = CONCAT(nomes_encontrados, ', ', nome_var);
+        END IF;
+    END LOOP;
+    
+    CLOSE cur_nomes;
+    
+    RETURN IFNULL(nomes_encontrados, 'Nenhum produto cadastrado');
+END$$
+
+-- Function 3: Consultar datas de validade para uma marca e nome (quantidade > 0)
+CREATE FUNCTION ConsultarValidadesPorMarcaNome(
+    marca_produto VARCHAR(50),
+    nome_produto VARCHAR(100)
+) 
+RETURNS TEXT
+READS SQL DATA
+DETERMINISTIC
+BEGIN
+    DECLARE validades_encontradas TEXT DEFAULT '';
+    DECLARE done INT DEFAULT FALSE;
+    DECLARE validade_var DATE;
+    DECLARE quantidade_var INT;
+    
+    -- Cursor para buscar validades onde quantidade > 0
+    DECLARE cur_validades CURSOR FOR
+        SELECT e.validade, e.quantidade_compra
+        FROM estoque e
+        INNER JOIN produtos p ON e.id_produto = p.id_produto
+        WHERE p.marca = marca_produto 
+          AND p.nome = nome_produto
+          AND p.quantidade > 0
+        ORDER BY e.validade;
+    
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
+    
+    OPEN cur_validades;
+    
+    read_loop: LOOP
+        FETCH cur_validades INTO validade_var, quantidade_var;
+        IF done THEN
+            LEAVE read_loop;
+        END IF;
+        
+        IF validades_encontradas = '' THEN
+            SET validades_encontradas = CONCAT(
+                validade_var, 
+                ' (Quantidade: ', quantidade_var, ')'
+            );
+        ELSE
+            SET validades_encontradas = CONCAT(
+                validades_encontradas, 
+                ', ', 
+                validade_var, 
+                ' (Quantidade: ', quantidade_var, ')'
+            );
+        END IF;
+    END LOOP;
+    
+    CLOSE cur_validades;
+    
+    RETURN IFNULL(validades_encontradas, 'Nenhuma validade encontrada ou produto sem estoque');
+END$$
+
+DELIMITER ;
+
+-- FUNCTIONS ADICIONAIS ÚTEIS -----------------------------------------------
+
+DELIMITER $$
+
+-- Function auxiliar: Buscar produtos por marca
+CREATE FUNCTION BuscarProdutosPorMarca(marca_produto VARCHAR(50)) 
+RETURNS TEXT
+READS SQL DATA
+DETERMINISTIC
+BEGIN
+    DECLARE produtos_encontrados TEXT DEFAULT '';
+    DECLARE done INT DEFAULT FALSE;
+    DECLARE nome_var VARCHAR(100);
+    DECLARE quantidade_var INT;
+    
+    DECLARE cur_produtos CURSOR FOR
+        SELECT nome, quantidade
+        FROM produtos 
+        WHERE marca = marca_produto
+        ORDER BY nome;
+    
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
+    
+    OPEN cur_produtos;
+    
+    read_loop: LOOP
+        FETCH cur_produtos INTO nome_var, quantidade_var;
+        IF done THEN
+            LEAVE read_loop;
+        END IF;
+        
+        IF produtos_encontrados = '' THEN
+            SET produtos_encontrados = CONCAT(
+                nome_var, 
+                ' (Estoque: ', quantidade_var, ')'
+            );
+        ELSE
+            SET produtos_encontrados = CONCAT(
+                produtos_encontrados, 
+                ', ', 
+                nome_var, 
+                ' (Estoque: ', quantidade_var, ')'
+            );
+        END IF;
+    END LOOP;
+    
+    CLOSE cur_produtos;
+    
+    RETURN IFNULL(produtos_encontrados, 'Nenhum produto encontrado para esta marca');
+END$$
+
+-- Function auxiliar: Verificar estoque total por marca e nome
+CREATE FUNCTION VerificarEstoquePorMarcaNome(
+    marca_produto VARCHAR(50),
+    nome_produto VARCHAR(100)
+) 
+RETURNS INT
+READS SQL DATA
+DETERMINISTIC
+BEGIN
+    DECLARE estoque_total INT;
+    
+    SELECT quantidade INTO estoque_total
+    FROM produtos 
+    WHERE marca = marca_produto 
+      AND nome = nome_produto;
+    
+    RETURN IFNULL(estoque_total, 0);
+END$$
+
+DELIMITER ;
+
+-- INSERTS PARA TESTE -------------------------------------------------------
+
+-- Inserir produtos
+INSERT INTO produtos (quantidade, nome, marca, valor_venda, descricao) VALUES
+(0, 'Arroz Integral', 'Tio João', 8.50, 'Arroz integral pacote 1kg'),
+(0, 'Feijão Carioca', 'Camil', 6.80, 'Feijão carioca tipo 1'),
+(0, 'Azeite de Oliva', 'Andorinha', 15.90, 'Azeite extra virgem 500ml'),
+(0, 'Café em Pó', 'Pelé', 12.40, 'Café torrado e moído 500g');
+
+-- Inserir estoque (os triggers vão atualizar automaticamente a quantidade em produtos)
+INSERT INTO estoque (id_produto, quantidade_compra, validade, data_compra, valor_compra) VALUES
+(1, 100, '2024-12-31', '2024-01-15', 5.80),
+(1, 10, '2025-10-29', '2025-10-19', 5.80),
+(1, 50, '2025-01-31', '2024-02-01', 5.90),
+(2, 80, '2024-11-30', '2024-01-20', 4.50),
+(3, 30, '2024-03-01', '2024-01-10', 10.50), -- Vencido
+(3, 40, '2025-10-25', '2024-02-01', 10.80), -- Próximo do vencimento
+(4, 60, '2024-12-31', '2024-01-25', 8.20);
+
+-- Inserir vendas
+INSERT INTO vendas (id_estoque, quantidade_venda, data_venda) VALUES
+(1, 10, '2024-02-01'),
+(1, 5, '2024-02-02'),
+(2, 8, '2024-02-01'),
+(3, 12, '2024-02-03'),
+(6, 15, '2024-02-04');
+
+INSERT INTO vendas (id_estoque, quantidade_venda) VALUES
+(1, 10);
+
+-- */
+
+-- CONSULTAS DE TESTE -------------------------------------------------------
+/*
+-- 1. Verificar produtos após inserções
+SELECT '=== PRODUTOS APÓS INSERÇÕES ===' AS Info;
+SELECT * FROM view_produtos_completos;
+
+-- 2. Verificar estoque detalhado
+SELECT '=== ESTOQUE DETALHADO ===' AS Info;
+SELECT * FROM view_estoque_detalhado;
+
+-- 3. Verificar vendas com lucro
+SELECT '=== VENDAS COM LUCRO ===' AS Info;
+SELECT * FROM view_vendas_lucro;
+
+-- 4. Verificar produtos vencidos
+SELECT '=== PRODUTOS VENCIDOS ===' AS Info;
+SELECT * FROM view_estoque_vencido;
+
+-- 5. Verificar produtos com validade próxima
+SELECT '=== PRODUTOS COM VALIDADE PRÓXIMA ===' AS Info;
+SELECT * FROM view_estoque_validade_proxima;
+
+-- 6. Testar a function de cálculo de lucro
+SELECT '=== TESTE FUNCTION CALCULAR LUCRO ===' AS Info;
+SELECT 
+    Valor_Compra, 
+    Valor_Venda, 
+    Quantidade_Venda,
+    CalcularLucro(Valor_Compra, Valor_Venda, Quantidade_Venda) AS Lucro_Calculado
+FROM view_vendas_lucro 
+LIMIT 3;
+
+-- 7. Executar testes de validação
+SELECT '=== TESTES DE VALIDAÇÃO ===' AS Info;
+CALL TestarInsercaoProdutoInexistente();
+CALL TestarQuantidadeNegativa();
+CALL TestarVendaEstoqueInsuficiente();
+
+-- 8. Testar UPDATE que muda produto (cenário crítico)
+SELECT '=== TESTE UPDATE MUDANDO PRODUTO ===' AS Info;
+
+-- Verificar estoque antes do update
+SELECT 'Antes do UPDATE:' AS Status;
+SELECT p.id_produto, p.nome, p.quantidade 
+FROM produtos p 
+WHERE p.id_produto IN (1, 2);
+
+-- Executar update que muda o produto
+UPDATE estoque 
+SET id_produto = 2, quantidade_compra = 25 
+WHERE id_estoque = 2;
+
+-- Verificar estoque após o update
+SELECT 'Após o UPDATE:' AS Status;
+SELECT p.id_produto, p.nome, p.quantidade 
+FROM produtos p 
+WHERE p.id_produto IN (1, 2);
+
+-- 9. Relatório consolidado de lucro por produto
+SELECT '=== LUCRO POR PRODUTO ===' AS Info;
+SELECT 
+    Nome,
+    Marca,
+    SUM(Quantidade_Venda) AS Total_Vendido,
+    SUM(Lucro) AS Lucro_Total
+FROM view_vendas_lucro
+GROUP BY Nome, Marca;
+
+-- 10. Situação atual do estoque por validade
+SELECT '=== SITUAÇÃO DO ESTOQUE POR VALIDADE ===' AS Info;
+SELECT 
+    p.nome AS Produto,
+    e.quantidade_compra AS Quantidade,
+    e.validade AS Validade,
+    CASE 
+        WHEN VerificarValidadeVencida(e.validade) THEN 'VENCIDO'
+        WHEN VerificarValidadeProxima(e.validade) THEN 'PRÓXIMO VENCIMENTO'
+        ELSE 'DENTRO DA VALIDADE'
+    END AS Status_Validade
+FROM estoque e
+INNER JOIN produtos p ON e.id_produto = p.id_produto
+ORDER BY e.validade;
+
+-- */
