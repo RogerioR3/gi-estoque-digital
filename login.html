@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login | Estoque</title>
+    
+    <style>
+    body{
+        font-family: Arial, Helvetica, sans-serif;
+        background-image: linear-gradient(45deg, white, blue);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        margin: 0;
+    }
+
+    div{
+        color: white;
+        background-color: rgb(0, 0, 0, 0.8);
+        padding: 40px;
+        border-radius: 15px;
+        width: 80%;
+        max-width: 400px;
+        box-sizing: border-box;
+    }
+
+    input{
+        width: 100%;
+        padding: 12px;
+        margin-bottom: 15px;
+        border: 1px solid #ccc;
+        border-radius: 5px;
+        font-size: 1rem;
+        box-sizing: border-box;
+    }
+
+    button{
+        color: white;
+        background-color: blue;
+        border: none;
+        padding: 12px;
+        width: 100%;
+        border-radius: 5px;
+        font-size: 1rem;
+        cursor: pointer;
+        box-sizing: border-box;
+    }
+
+        button:hover{
+        background-color: rgb(40, 40, 242);
+    }
+
+        /* Media query para a responsividade em aparelhos com telas menores */
+        @media (max-width: 600px) {
+            div.login-box {
+                padding: 30px;
+                width: 95%;
+                max-width: none;
+            }
+
+            h1 {
+                font-size: 1.5rem;
+                margin-bottom: 20px;
+            }
+
+            input {
+                padding: 15px;
+                font-size: 1.1rem;
+                margin-bottom: 20px;
+            }
+
+            button {
+                padding: 15px;
+                font-size: 1.1rem;
+            }
+        }
+
+        /* CSS para as Mensagens de Sucesso e Erro*/
+        .toast-message {
+            display: none; /* Oculto por padrão */
+            position: fixed; /* Fixa na tela */
+            top: 20px; /* Distância do topo */
+            right: 20px; /* Distância da direita */
+            color: white;
+            padding: 15px 25px;
+            border-radius: 5px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            display: flex; /* Para alinhar o conteúdo horizontalmente */
+            align-items: center; /* Alinha verticalmente */
+            gap: 10px; /* Espaçamento entre os itens */
+            z-index: 1000; /* Garante que fique acima de outros elementos */
+            opacity: 0; /* Começa invisível para animação */
+            transition: opacity 0.5s ease-in-out, transform 0.5s ease-in-out; /* Transição para aparecer/desaparecer */
+            transform: translateY(-20px); /* Começa um pouco acima para deslizar para baixo */
+        }
+
+        .toast-message.show {
+            display: flex;
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .toast-message .icon {
+            font-size: 20px;
+        }
+
+        .toast-message .text {
+            flex-grow: 1;
+        }
+
+        .toast-message .close-btn {
+            cursor: pointer;
+            font-size: 20px;
+            margin-left: 15px;
+            background: none;
+            border: none;
+            color: white;
+            font-weight: bold;
+        }
+
+        .toast-message .close-btn:hover {
+            color: #ddd;
+        }
+
+        .success-toast {
+            background-color: #4CAF50;
+        }
+
+        .error-toast {
+            background-color: #f1594e;
+        }
+    </style>
+
+</head>
+<body>
+    <div id="successMessage" class="toast-message success-toast">
+        <span class="icon">&#10003;</span> <span class="text">Sucesso! Login efetuado.</span>
+        <button class="close-btn">&times;</button> </div>
+
+    <div id="errorMessage" class="toast-message error-toast">
+        <span class="icon">&#10007;</span> <span class="text">Erro! Usuário ou senha incorretos.</span>
+        <button class="close-btn">&times;</button> </div>
+
+    <div class="login-box"> <h1>Login - GJ | Estoque Digital</h1>
+        <input type="text" id="usuario" placeholder="Usuário">
+        <br><br>
+        <input type="password" id="senha" placeholder="Senha">
+        <br><br>
+        <button id="acessarBtn">Acessar</button>
+    </div>
+
+    <script>
+        const usuarioInput = document.getElementById('usuario');
+        const senhaInput = document.getElementById('senha');
+        const acessarBtn = document.getElementById('acessarBtn');
+
+        // Aqui é onde define o usuário e senha válidos para acessar o sistema
+        const usuarioValido = "GJEmbalagens";
+        const senhaValida = "embalagem3595";
+
+        function showMessage(type, message, duration = 3000) {
+            const messageElement = document.getElementById(`${type}Message`);
+            const textElement = messageElement.querySelector('.text');
+            textElement.textContent = message;
+
+            document.getElementById('successMessage').classList.remove('show');
+            document.getElementById('errorMessage').classList.remove('show');
+
+            messageElement.classList.add('show');
+
+            setTimeout(() => {
+                messageElement.classList.remove('show');
+            }, duration);
+        }
+
+        function showSuccessMessage(message, duration = 3000) {
+            showMessage('success', message, duration);
+        }
+
+        function showErrorMessage(message, duration = 3000) {
+            showMessage('error', message, duration);
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const successCloseButton = document.querySelector('#successMessage .close-btn');
+            if (successCloseButton) {
+                successCloseButton.addEventListener('click', () => {
+                    document.getElementById('successMessage').classList.remove('show');
+                });
+            }
+
+            const errorCloseButton = document.querySelector('#errorMessage .close-btn');
+            if (errorCloseButton) {
+                errorCloseButton.addEventListener('click', () => {
+                    document.getElementById('errorMessage').classList.remove('show');
+                });
+            }
+        });
+
+        acessarBtn.addEventListener('click', function() {
+            const usuarioDigitado = usuarioInput.value;
+            const senhaDigitada = senhaInput.value;
+
+            if (usuarioDigitado === usuarioValido && senhaDigitada === senhaValida) {
+                showSuccessMessage('Login efetuado com sucesso!');
+                setTimeout(() => {
+                    window.location.href = 'index.php';
+                }, 2000); // Redireciona para o site após 2 segundo
+            } else {
+                showErrorMessage('Usuário ou senha incorretos!');
+            }
+        });
+    </script>
+
+</body>
+</html>

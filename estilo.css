@@ -1,0 +1,78 @@
+h2 {
+  margin-top: 20px; 
+}
+
+.imgEmbalagens {
+    margin-top: 20px; 
+    width: 100%;
+}
+
+.botaoSalvar {
+    background: rgb(252,193,18);
+    background-image: radial-gradient(circle, rgb(104, 151, 231) 0%,  rgb(13, 73, 177) 100%);
+    padding: 10px 20px;
+    border: none;
+    font-weight: bold;
+    margin-top: 20px; 
+}
+
+.botaoNovo {
+    background: rgb(252,193,18);
+    background-image: radial-gradient(circle, rgb(199, 201, 211) 0%,  rgb(160,154,154) 100%);
+    padding: 10px 20px;
+    border: none;
+    font-weight: bold;
+    margin-top: 20px;
+}
+
+.desabilitado {
+    background-color: #ccc;
+}
+
+/* Estilização da tabela onde estão os produtos */
+.table{
+    margin-top: 20px; 
+}
+
+/* São as imagens do Editar e Excluir */
+.imgTabela {
+    width: 36px;
+}
+
+/* .col-8 {
+    width: 80%;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.col-4 {
+    width: 36%;
+    margin-left: auto;
+    margin-right: auto;
+} */
+
+.col {
+    text-align: center;
+}
+
+.botaoRelatorio{
+    color: white;
+    background: rgb(252,193,18);
+    background-image: radial-gradient(circle, rgb(92, 233, 191) 0%,  rgb(23, 237, 130) 100%);
+    padding: 10px 20px;
+    border: none;
+    font-weight: bold;
+    margin-top: 30px; 
+}
+
+footer {
+    background-color: #f0f0f0;
+    color: #333;
+    padding: 10px 0;
+    text-align: center;
+    bottom: 0;
+    width: 100%;
+    font-size: 0.8em;
+    box-sizing: border-box;
+    margin-top: 30px; 
+}
